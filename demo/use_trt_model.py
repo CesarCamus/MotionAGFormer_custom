@@ -1,3 +1,7 @@
+"""
+This file presents an example of how to run the triton model for 3D pose estimation. Specify the input video path, corresponding sequence of 2D keypoints path and the output directory where the results will be saved. The 2D keypoints are loaded from the specified path and the 3D pose is estimated using the triton model. The results are saved in the output directory as a JSON file.
+"""
+
 import norfair
 from norfair import Detection, Paths, Tracker
 #from triton_backend.utils import BoundingBox, postprocess

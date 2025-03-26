@@ -15,7 +15,9 @@ import cv2
 import json
 
 class Pose3DTritonInferencer:
-
+    """
+    This class is used to perform 3D pose estimation using the triton model. The class is initialized with the model name, model version, batch size, fixed input size, confidence threshold, model type and search region ratio. The class has methods to process the 2D keypoints sequence, prepare the input, perform inference, process the output, draw the pose, draw the heatmap, draw all and get the input details and output details. The class has a method to load the triton client.
+    """
     def __init__(
             self,
             model_name='motion_former_3d_pose', 
