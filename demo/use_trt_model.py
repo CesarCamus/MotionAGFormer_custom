@@ -24,4 +24,5 @@ output_dir = "demo/results_trt/360/360_10"
 
 pose3D_detector.process_2D_seq(example_keypoints,example_video_path, output_dir)
 
+pose3D_detector.get_pose3D(example_video_path,output_dir,example_keypoints)
 pose3D_detector.triton_client.close()
