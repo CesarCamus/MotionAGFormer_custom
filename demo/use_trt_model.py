@@ -20,11 +20,12 @@ import json
 
 pose3D_detector = Pose3DTritonInferencer()
 
-example_video_path = "/home/cesar/Desktop/code/models_trial/MotionAGFormer_custom/demo/raw_maneuvers_data/360/360_10.mp4"
-keypoints_path = "/home/cesar/Desktop/code/models_trial/MotionAGFormer_custom/demo/processed_videos/360/360_10" + "/input_2D/keypoints.npz"
+#example_video_path = "/home/cesar/Desktop/code/models_trial/MotionAGFormer_custom/demo/raw_maneuvers_data/360/360_10.mp4"
+example_video_path = '/home/cesar/Desktop/code/models_trial/surfers-object-detection/crops_video1/video_from_crops1.mp4'
+keypoints_path = "/home/cesar/Desktop/code/models_trial/MotionAGFormer_custom/demo/processed_videos/2025-03-03-11-27-32_15_4/input_2D/keypoints.npz"
 example_keypoints = np.load(keypoints_path, allow_pickle=True)["reconstruction"]
 
-output_dir = "demo/results_trt/360/360_10"
+output_dir = "demo/results_trt/2025-03-03-11-27-32_15_4"
 
 pose3D_detector.process_2D_seq(example_keypoints,example_video_path, output_dir)
 
