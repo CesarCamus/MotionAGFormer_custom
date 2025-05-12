@@ -8,4 +8,5 @@ logs/
 *.npy
 *.json
 *.png
+*.pth.tr
 
