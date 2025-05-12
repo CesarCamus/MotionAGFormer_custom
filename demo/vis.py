@@ -1,9 +1,12 @@
 import sys
 import argparse
 import cv2
+import os 
+
+sys.path.append(os.getcwd())
+
 from lib.preprocess import h36m_coco_format, revise_kpts
 from lib.hrnet.gen_kpts import gen_video_kpts as hrnet_pose
-import os 
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,8 +14,7 @@ import glob
 from tqdm import tqdm
 import copy
 from time import time
-sys.path.append(os.getcwd())
-from demo.lib.utils import normalize_screen_coordinates, camera_to_world
+from lib.utils import normalize_screen_coordinates, camera_to_world
 from model.MotionAGFormer import MotionAGFormer
 import onnxruntime as ort
 import matplotlib
@@ -89,7 +91,7 @@ def get_pose2D(video_path, output_dir):
     #height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
     print('\nGenerating 2D pose...')
-    keypoints, scores,traj = hrnet_pose(video_path, det_dim=416, num_peroson=1, gen_output=True)
+    keypoints, scores = hrnet_pose(video_path, det_dim=416, num_peroson=1, gen_output=True)
     #print('keypoints_before : ',keypoints.shape)
     keypoints, scores, valid_frames = h36m_coco_format(keypoints, scores)
     #print('keypoints_after :',keypoints.shape)
@@ -362,16 +364,16 @@ import json
 import os
 
 @torch.no_grad()
-def get_3D_keypoints(video_path, output_dir, model, model_path, args, keypoints, label):
+def get_3D_keypoints(output_dir, model, keypoints, model_path=None, args=None,label=None,video_path=None):
     clips, downsample = turn_into_clips(keypoints)
     cap = cv2.VideoCapture(video_path)
     ret, img = cap.read()
     if img is not None:
-        img_size = img.shape
+        img_size = (384, 288)
     cap.release()
     print('\nGenerating 3D pose...')
     
-    video_name = os.path.basename(video_path)
+    #video_name = os.path.basename(video_path)
 
     all_frames = []
 
@@ -416,8 +418,8 @@ def get_3D_keypoints(video_path, output_dir, model, model_path, args, keypoints,
 
     # Build final JSON structure
     json_output = {
-        "video_name": video_name,
-        "label": label,
+        #"video_name": video_name,
+        #"label": label,
         "frames": all_frames
     }
 
@@ -456,12 +458,14 @@ def get_3D_keypoints_all(directory,show_anim=False):
     output_dir_main = './demo/processed_videos'
     for root, dirs, files in os.walk(directory):
         for file in tqdm(files):
+            if not file.endswith('.mp4'):
+                continue
             print(f"Processing {file}")
             # if 'take-off_86' in file:
             #     print(f"Skipping {file} as it contains 'take_off_86'.")
             #     continue
-            label = file.split('_')[0]
-            output_dir = os.path.join(output_dir_main,label, file.split('.')[0])
+            #label = file.split('_')[0]
+            output_dir = os.path.join(root)
             if os.path.exists(os.path.join(output_dir, 'keypoints_xyz.json')):
                 print(f"Skipping {file} as keypoints_xyz.json already exists.")
                 continue
@@ -476,7 +480,7 @@ def get_3D_keypoints_all(directory,show_anim=False):
                 img2video(video_path, output_dir)
                 print('Generating demo successful!')
             keypoints = np.load(output_dir + '/input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
-            get_3D_keypoints(video_path, output_dir, model, model_path,args,keypoints,label)
+            get_3D_keypoints(video_path, output_dir, model, model_path,args,keypoints)
             print(f"Processing {file} took {time() - start_time:.2f} seconds")
             #counter += 1
             #if counter == 10:
@@ -520,8 +524,6 @@ def rename_files_in_subfolders(directory):
 
         
 if __name__ == "__main__":
-    #directory='demo/raw_maneuvers_data'
-    #rename_files_in_subfolders(directory)
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--video', type=str, default='sample_video.mp4', help='input video')
     # parser.add_argument('--gpu', type=str, default='0', help='input video')
@@ -537,10 +539,31 @@ if __name__ == "__main__":
     # get_pose3D(video_path, output_dir)
     # img2video(video_path, output_dir)
     # print('Generating demo successful!')
-    #get_3D_keypoints_all(directory,show_anim=False)
-    # get_pose3D(video_path, output_dir)
-    print('Generating demo successful!')
-    #img2video(video_path, output_dir)
-    #print('Generating demo successful!')
 
+    args, _ = argparse.ArgumentParser().parse_known_args()
+    args.n_layers, args.dim_in, args.dim_feat, args.dim_rep, args.dim_out = 16, 3, 128, 512, 3
+    args.mlp_ratio, args.act_layer = 4, nn.GELU
+    args.attn_drop, args.drop, args.drop_path = 0.0, 0.0, 0.0
+    args.use_layer_scale, args.layer_scale_init_value, args.use_adaptive_fusion = True, 0.00001, True
+    args.num_heads, args.qkv_bias, args.qkv_scale = 8, False, None
+    args.hierarchical = False
+    args.use_temporal_similarity, args.neighbour_num, args.temporal_connection_len = True, 2, 1
+    args.use_tcn, args.graph_only = False, False
+    args.n_frames = 243
+    args = vars(args)
 
+    ## Reload 
+    model = nn.DataParallel(MotionAGFormer(**args))#.cuda()
+
+    # Put the pretrained model of MotionAGFormer in 'checkpoint/'
+    model_path = sorted(glob.glob(os.path.join('checkpoint', 'motionagformer-b-h36m.pth.tr')))[0]
+
+    pre_dict = torch.load(model_path,map_location=torch.device('cpu'))
+    model.load_state_dict(pre_dict['model'], strict=True)
+
+    model.eval()
+    #video_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/video/b_2022-11-05-12-20-48_558.mp4"
+    output_dir = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/processed_videos"
+    #keypoints = np.load("/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/output/b_2022-11-05-12-20-48_558/input_2D/keypoints.npz", allow_pickle=True)['reconstruction']
+    directory = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/3d-based-reid/data/custom_reid/img_experimental_data"
+    get_3D_keypoints_all(directory=directory,show_anim=False)

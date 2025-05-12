@@ -179,4 +179,4 @@ def gen_video_kpts(video, det_dim=416, num_peroson=1, gen_output=False):
     keypoints = keypoints.transpose(1, 0, 2, 3)  # (T, M, N, 2) --> (M, T, N, 2)
     scores = scores.transpose(1, 0, 2)  # (T, M, N) --> (M, T, N)
 
-    return keypoints, scores,traj
+    return keypoints, scores

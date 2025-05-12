@@ -14,7 +14,7 @@ import os.path as osp
 import numpy as np
 
 sys.path.insert(0, osp.join(osp.dirname(osp.realpath(__file__)), '..'))
-from demo.lib.hrnet.lib.utils.transforms import transform_preds
+from lib.hrnet.lib.utils.transforms import transform_preds
 sys.path.pop(0)
 
 
