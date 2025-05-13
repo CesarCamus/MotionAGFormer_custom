@@ -366,11 +366,11 @@ import os
 @torch.no_grad()
 def get_3D_keypoints(output_dir, model, keypoints, model_path=None, args=None,label=None,video_path=None):
     clips, downsample = turn_into_clips(keypoints)
-    cap = cv2.VideoCapture(video_path)
-    ret, img = cap.read()
-    if img is not None:
-        img_size = (384, 288)
-    cap.release()
+    #cap = cv2.VideoCapture(video_path)
+    #ret, img = cap.read()
+    #if img is not None:
+    img_size = (384, 288)
+    #cap.release()
     print('\nGenerating 3D pose...')
     
     #video_name = os.path.basename(video_path)
@@ -454,7 +454,7 @@ def get_3D_keypoints_all(directory,show_anim=False):
     model.load_state_dict(pre_dict['model'], strict=True)
 
     model.eval()
-    #counter = 0
+    counter = 0
     output_dir_main = './demo/processed_videos'
     for root, dirs, files in os.walk(directory):
         for file in tqdm(files):
@@ -480,11 +480,12 @@ def get_3D_keypoints_all(directory,show_anim=False):
                 img2video(video_path, output_dir)
                 print('Generating demo successful!')
             keypoints = np.load(output_dir + '/input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
-            get_3D_keypoints(video_path, output_dir, model, model_path,args,keypoints)
+            #get_3D_keypoints(video_path, output_dir, model, model_path,args,keypoints)
+            get_3D_keypoints(output_dir,model,keypoints)
             print(f"Processing {file} took {time() - start_time:.2f} seconds")
-            #counter += 1
-            #if counter == 10:
-            #    return
+            # counter += 1
+            # if counter == 1:
+            #     return
 
     # raw_maneuvers_data_dir = './raw_maneuvers_data'
     # all_filenames = get_all_filenames(raw_maneuvers_data_dir)
