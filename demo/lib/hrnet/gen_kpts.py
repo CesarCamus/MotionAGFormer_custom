@@ -131,7 +131,7 @@ def gen_video_kpts(video, det_dim=416, num_peroson=1, gen_output=False):
 
         # Using Sort to track people
         people_track = people_sort.update(bboxs)
-
+        print("people_track before:", people_track.shape)
         # Track the first two people in the video and remove the ID
         if people_track.shape[0] == 1:
             people_track_ = people_track[-1, :-1].reshape(1, 4)
@@ -140,6 +140,7 @@ def gen_video_kpts(video, det_dim=416, num_peroson=1, gen_output=False):
             people_track_ = people_track_[::-1]
         else:
             continue
+        print("people_track after :",people_track.shape)
 
         track_bboxs = []
         for bbox in people_track_:
@@ -160,7 +161,8 @@ def gen_video_kpts(video, det_dim=416, num_peroson=1, gen_output=False):
 
             # compute coordinate
             preds, maxvals = get_final_preds(cfg, output.clone().cpu().numpy(), np.asarray(center), np.asarray(scale))
-
+            #print("preds shape :", preds.shape)
+            #print("maxvals shape :", maxvals.shape)
         kpts = np.zeros((num_peroson, 17, 2), dtype=np.float32)
         scores = np.zeros((num_peroson, 17), dtype=np.float32)
         for i, kpt in enumerate(preds):
@@ -168,15 +170,17 @@ def gen_video_kpts(video, det_dim=416, num_peroson=1, gen_output=False):
 
         for i, score in enumerate(maxvals):
             scores[i] = score.squeeze()
-
+        #print("kpts shape :",kpts.shape)
         kpts_result.append(kpts)
         scores_result.append(scores)
 
-    #print(traj)
     keypoints = np.array(kpts_result)
+    
     scores = np.array(scores_result)
 
     keypoints = keypoints.transpose(1, 0, 2, 3)  # (T, M, N, 2) --> (M, T, N, 2)
+
     scores = scores.transpose(1, 0, 2)  # (T, M, N) --> (M, T, N)
 
     return keypoints, scores
+

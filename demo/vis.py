@@ -22,11 +22,34 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import os
 import matplotlib.gridspec as gridspec
-import triton_backend.trt_client as triton_client
+#import triton_backend.trt_client as triton_client
 
 plt.switch_backend('agg')
 matplotlib.rcParams['pdf.fonttype'] = 42
 matplotlib.rcParams['ps.fonttype'] = 42
+
+"""
+Keypoints corespondance list : 
+
+0: central hip
+1: right hip
+2: right knee
+3: right ankle
+4: left hip
+5: left knee
+6: left ankle
+7: spine
+8: neckbase
+9: nose
+10: forehead
+11: left shoulder
+12: left elbow
+13: left wrist
+14: right shoulder
+15: right elbow
+16: right wrist
+"""
+
 
 def show2Dpose(kps, img):
     connections = [[0, 1], [1, 2], [2, 3], [0, 4], [4, 5],
@@ -210,7 +233,7 @@ def run_motionagformer_onnx(input_array,onnx_session,onnx_input_name):
     return onnx_session.run(None, {onnx_input_name: input_array})[0]
 
 @torch.no_grad()
-def get_pose3D(video_path, output_dir):
+def get_pose3D(video_path, output_dir,keypoints,model):
     args, _ = argparse.ArgumentParser().parse_known_args()
     args.n_layers, args.dim_in, args.dim_feat, args.dim_rep, args.dim_out = 16, 3, 128, 512, 3
     args.mlp_ratio, args.act_layer = 4, nn.GELU
@@ -244,7 +267,7 @@ def get_pose3D(video_path, output_dir):
 
 
     ## input
-    keypoints = np.load(output_dir + '/input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
+    #keypoints = np.load(output_dir + '/input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
     # keypoints = np.load('demo/lakeside3.npy')
     # keypoints = keypoints[:240]
     # keypoints = keypoints[None, ...]
@@ -266,7 +289,7 @@ def get_pose3D(video_path, output_dir):
         if img is None:
             continue
         img_size = img.shape
-
+        img_size = (2160,3840)
         input_2D = keypoints[0][i]
 
         image = show2Dpose(input_2D, copy.deepcopy(img))
@@ -275,7 +298,7 @@ def get_pose3D(video_path, output_dir):
         os.makedirs(output_dir_2D, exist_ok=True)
         cv2.imwrite(output_dir_2D + str(('%04d'% i)) + '_2D.png', image)
 
-    
+    all_frames = []
     print('\nGenerating 3D pose...')
     for idx, clip in enumerate(clips):
         input_2D = normalize_screen_coordinates(clip, w=img_size[1], h=img_size[0]) 
@@ -286,8 +309,8 @@ def get_pose3D(video_path, output_dir):
 
         # output_3D_non_flip = model(input_2D) 
         # output_3D_flip = flip_data(model(input_2D_aug))
-        output_3D_non_flip = run_motionagformer_onnx(input_2D.numpy(), onnx_session, onnx_input_name)
-        output_3D_flip = flip_data(run_motionagformer_onnx(input_2D_aug.numpy(), onnx_session, onnx_input_name))
+        output_3D_non_flip = model(input_2D)
+        output_3D_flip = flip_data(model(input_2D_aug))
         output_3D = (output_3D_non_flip + output_3D_flip) / 2
 
         if idx == len(clips) - 1:
@@ -307,6 +330,20 @@ def get_pose3D(video_path, output_dir):
             max_value = np.max(post_out)
             post_out /= max_value
 
+            frame_data = {
+                "frame_index": j + idx * post_out_all.shape[0],
+                "keypoints": {
+                    str(i): {
+                        "x": float(post_out[i][0]),
+                        "y": float(post_out[i][1]),
+                        "z": float(post_out[i][2])
+                    }
+                    for i in range(post_out.shape[0])
+                }
+            }
+            all_frames.append(frame_data)
+
+            # Build final JSON structure
             
 
             fig = plt.figure(figsize=(9.6, 5.4))
@@ -320,7 +357,19 @@ def get_pose3D(video_path, output_dir):
             str(('%04d'% (idx * 243 + j)))
             plt.savefig(output_dir_3D + str(('%04d'% (idx * 243 + j))) + '_3D.png', dpi=200, format='png', bbox_inches='tight')
             plt.close(fig)
-        
+            os.makedirs(output_dir, exist_ok=True)
+
+        json_output = {
+                #"video_name": video_name,
+                #"label": label,
+                "frames": all_frames
+            }
+        json_path = os.path.join(output_dir, 'keypoints_xyz.json')
+        with open(json_path, 'w') as f:
+            json.dump(json_output, f, indent=4)
+
+        print(f"Saved keypoints to {json_path}")
+        return json_path    
 
         
     print('Generating 3D pose successful!')
@@ -360,6 +409,8 @@ def get_pose3D(video_path, output_dir):
         plt.savefig(output_dir_pose + str(('%04d'% i)) + '_pose.png', dpi=200, bbox_inches = 'tight')
         plt.close(fig)
 
+    return json_path
+
 import json
 import os
 
@@ -392,7 +443,7 @@ def get_3D_keypoints(output_dir, model, keypoints, model_path=None, args=None,la
             output_3D = output_3D[:, downsample]
 
         output_3D[:, :, 0, :] = 0
-        post_out_all = output_3D[0]#.cpu().detach().numpy()
+        post_out_all = output_3D[0]
 
         rot = [0.1407056450843811, -0.1500701755285263, -0.755240797996521, 0.6223280429840088]
         rot = np.array(rot, dtype='float32')
@@ -523,7 +574,308 @@ def rename_files_in_subfolders(directory):
             os.rename(os.path.join(root, file), os.path.join(root, new_name))
             id += 1
 
-        
+def load_3d_keypoints_from_json(json_path):
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        frames = data.get('threed_pose', data.get('frames', []))
+       #frames = data_3D['frames']
+        T = len(frames)
+        num_joints = 17
+
+        keypoints = np.zeros((T, num_joints, 3), dtype=np.float32)
+
+        for t, frame in enumerate(frames):
+            kp_dict = frame['keypoints']
+            for j in range(num_joints):
+                kp = kp_dict[str(j)]
+                keypoints[t, j] = np.array([kp['x'], kp['y'], kp['z']], dtype=np.float32)
+
+        return keypoints
+
+# def load_2d_keypoints_from_json(json_path):
+#         with open(json_path, 'r') as f:
+#             data = json.load(f)
+#         frames = data['twod_pose']
+#         print(frames)
+#        #frames = data_3D['frames']
+#         T = len(frames)
+#         num_joints = 17
+
+#         keypoints = np.zeros((T, num_joints, 3), dtype=np.float32)
+
+#         for t, frame in enumerate(frames):
+#             print(frame)
+#             kp_dict = frame['keypoints']
+#             for j in range(num_joints):
+#                 kp = kp_dict[str(j)]
+#                 keypoints[t, j] = kp
+
+#         return keypoints
+
+def load_2d_keypoints_from_json(json_path):
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    frames = data['twod_pose']
+    frame_ids = sorted(frames.keys(), key=int)
+    T = len(frame_ids)
+    num_joints = 17
+
+    keypoints = np.zeros((T, num_joints, 3), dtype=np.float32)
+
+    for t, frame_id in enumerate(frame_ids):
+        kp_list = frames[frame_id]['keypoints']
+        scores = frames[frame_id]['score']
+        for j in range(min(len(kp_list), num_joints)):
+            keypoints[t, j, :2] = np.array(kp_list[j][:2], dtype=np.float32)
+            keypoints[t, j, 2] = scores[j]
+
+    return keypoints
+
+def vis_kpts_3d(kpts_3d,output_dir,idx):
+    fig = plt.figure(figsize=(9.6, 5.4))
+    gs = gridspec.GridSpec(1, 1)
+    gs.update(wspace=-0.00, hspace=0.05) 
+    ax = plt.subplot(gs[0], projection='3d')
+    show3Dpose(kpts_3d, ax)
+    #print('post_out shape:', post_out.shape)
+    output_dir_3D = output_dir +'/pose3D/'
+    os.makedirs(output_dir_3D, exist_ok=True)
+    #str(('%04d'% (idx * 243 + j)))
+    plt.savefig(output_dir_3D + str(('%04d'% (idx))) + '_3D.png', dpi=200, format='png', bbox_inches='tight')
+    plt.close(fig)
+
+def vis_kpts_video(json_path):
+    keypoints = load_3d_keypoints_from_json(json_path)
+    T, J, D = keypoints.shape
+    output_dir = os.path.join(os.path.dirname(json_path), os.path.splitext(os.path.basename(json_path))[0])
+    os.makedirs(output_dir, exist_ok=True)
+    new_json_path = os.path.join(output_dir, os.path.basename(json_path))
+    #os.rename(json_path, new_json_path)
+    for i in tqdm(range(T)):
+        vis_kpts_3d(keypoints[i],output_dir,i)
+
+    print(f"Visualized 3D keypoints and saved to {output_dir}")
+    #plt.show()
+
+def prepare_input(clip,img_size):
+
+    
+    input_2D = normalize_screen_coordinates(clip, w=img_size[0], h=img_size[1]) 
+    input_2D_aug = flip_data(input_2D)
+
+    input_2D = torch.from_numpy(input_2D.astype('float32'))
+    input_2D_aug = torch.from_numpy(input_2D_aug.astype('float32'))
+
+    return input_2D, input_2D_aug
+
+@torch.no_grad()
+def process_2D_seq(keypoints,video_path,output_dir,model):
+
+        clips, downsample = turn_into_clips(keypoints)
+        cap = cv2.VideoCapture(video_path)
+        ret, img = cap.read()
+        if img is not None:
+            img_size = img.shape
+            img_size = (img.shape[1], img.shape[0])
+            print('img_size:', img_size)
+            
+        cap.release()
+
+        #img_size = (2160,3840)
+        #img_size =  (3840, 2160)
+        video_name = os.path.basename(video_path)
+
+        all_frames = []
+
+        for idx, clip in enumerate(clips):
+            batch_input = []
+
+
+            input_2D,input_2D_aug = prepare_input(clip,img_size)
+            
+            batch_input.append(input_2D.squeeze(0))       # Original
+            batch_input.append(input_2D_aug.squeeze(0))   # Augmented
+
+            # Convert list to a single stacked NumPy array (batch_size = 2 * len(clips))
+            batch_input = np.stack(batch_input)  # Shape: (2 * len(clips), 243, 17, 3)
+            batch_input = torch.from_numpy(batch_input).float()  # Convert to tensor
+            # Perform batch inference in one go
+            output_3D = model(batch_input)  # Shape: (2 * len(clips), ..., ...)
+
+            # Split outputs back into original and augmented versions
+            output_3D_non_flip = output_3D[0::2]  # Take even indices (original inputs)
+            output_3D_flip = flip_data(output_3D[1::2]) 
+
+            #output_3D_non_flip = self.inference(input_2D) 
+            #output_3D_flip = flip_data(self.inference(input_2D_aug))
+            output_3D = (output_3D_non_flip + output_3D_flip) / 2
+
+            if idx == len(clips) - 1:
+                output_3D = output_3D[:, downsample]
+
+            output_3D[:, :, 0, :] = 0
+            post_out_all = output_3D[0]#.cpu().detach().numpy()
+
+
+            #post_process(post_out_all,video_name)
+            rot = [0.1407056450843811, -0.1500701755285263, -0.755240797996521, 0.6223280429840088]
+            rot = np.array(rot, dtype='float32')
+            
+            for j in range(post_out_all.shape[0]):
+                keypoints_frame = camera_to_world(post_out_all[j], R=rot, t=0)
+                
+                keypoints_frame[:, 2] -= np.min(keypoints_frame[:, 2])
+                max_value = np.max(keypoints_frame)
+                keypoints_frame /= max_value
+                
+
+                frame_data = {
+                    "frame_index": j + idx * post_out_all.shape[0],
+                    "keypoints": {
+                        str(i): {
+                            "x": float(keypoints_frame[i][0]),
+                            "y": float(keypoints_frame[i][1]),
+                            "z": float(keypoints_frame[i][2])
+                        }
+                        for i in range(keypoints_frame.shape[0])
+                    }
+                }
+                all_frames.append(frame_data)
+
+        # Build final JSON structure
+        json_output = {
+            "video_name": video_name,
+            "label": None,
+            "frames": all_frames
+        }
+
+        # Save JSON
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, 'keypoints_xyz.json')
+        with open(json_path, 'w') as f:
+            json.dump(json_output, f, indent=4)
+
+        print(f"Saved keypoints to {json_path}")
+        return json_path
+
+@torch.no_grad()
+def process_2D_seq_curr(keypoints,video_path,output_dir,model):
+
+        clips, downsample = turn_into_clips(keypoints)
+        cap = cv2.VideoCapture(video_path)
+        ret, img = cap.read()
+        if img is not None:
+            img_size = img.shape
+            print('img_size:', img_size)
+            
+        cap.release()
+
+        img_size = (228,384)
+
+        video_name = os.path.basename(video_path)
+
+        all_frames = []
+
+        for idx, clip in enumerate(clips):
+            batch_input = []
+
+
+            input_2D,input_2D_aug = prepare_input(clip,img_size)
+            
+            batch_input.append(input_2D.squeeze(0))       # Original
+            batch_input.append(input_2D_aug.squeeze(0))   # Augmented
+
+            # Convert list to a single stacked NumPy array (batch_size = 2 * len(clips))
+            batch_input = np.stack(batch_input)  # Shape: (2 * len(clips), 243, 17, 3)
+            batch_input = torch.from_numpy(batch_input).float()  # Convert to tensor
+            # Perform batch inference in one go
+            output_3D = model(batch_input)  # Shape: (2 * len(clips), ..., ...)
+
+            # Split outputs back into original and augmented versions
+            output_3D_non_flip = output_3D[0::2]  # Take even indices (original inputs)
+            output_3D_flip = flip_data(output_3D[1::2]) 
+
+            
+
+            #output_3D_non_flip = self.inference(input_2D) 
+            #output_3D_flip = flip_data(self.inference(input_2D_aug))
+            output_3D = (output_3D_non_flip + output_3D_flip) / 2
+
+            if idx == len(clips) - 1:
+                output_3D = output_3D[:, downsample]
+
+            output_3D[:, :, 0, :] = 0
+            post_out_all = output_3D[0]#.cpu().detach().numpy()
+
+
+            #post_process(post_out_all,video_name)
+            rot = [0.1407056450843811, -0.1500701755285263, -0.755240797996521, 0.6223280429840088]
+            rot = np.array(rot, dtype='float32')
+            
+            for j in range(post_out_all.shape[0]):
+                keypoints_frame = camera_to_world(post_out_all[j], R=rot, t=0)
+                keypoints_frame[:, 2] -= np.min(keypoints_frame[:, 2])
+                max_value = np.max(keypoints_frame)
+                keypoints_frame /= max_value
+
+                frame_data = {
+                    "frame_index": j + idx * post_out_all.shape[0],
+                    "keypoints": {
+                        str(i): {
+                            "x": float(keypoints_frame[i][0]),
+                            "y": float(keypoints_frame[i][1]),
+                            "z": float(keypoints_frame[i][2])
+                        }
+                        for i in range(keypoints_frame.shape[0])
+                    }
+                }
+                all_frames.append(frame_data)
+
+        # Build final JSON structure
+        json_output = {
+            "video_name": video_name,
+            "label": None,
+            "frames": all_frames
+        }
+
+        # Save JSON
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, 'keypoints_xyz.json')
+        with open(json_path, 'w') as f:
+            json.dump(json_output, f, indent=4)
+
+        print(f"Saved keypoints to {json_path}")
+        return json_path
+
+def filter_confident_keypoints(kpts_2d: np.ndarray, threshold: float):
+    """
+    Filters frames where all keypoints have a confidence score above the given threshold.
+
+    Parameters:
+    - kpts_2d (np.ndarray): Input keypoints with shape (1, num_frames, 17, 3)
+    - threshold (float): Confidence threshold for filtering
+
+    Returns:
+    - valid_ids (List[int]): List of frame indices with all keypoints above threshold
+    - filtered_kpts (np.ndarray): Filtered keypoints with shape (N_valid, 17, 3)
+    """
+    # Remove first singleton dimension: (num_frames, 17, 3)
+
+    # Extract confidence values: shape (num_frames, 17)
+    confidences = kpts_2d[..., 2]
+
+    # Identify frames where all keypoints have confidence > threshold
+    valid_mask = np.all(confidences > threshold, axis=1)
+
+    # Get indices of valid frames
+    valid_ids = np.where(valid_mask)[0].tolist()
+
+    # Filter keypoints for valid frames
+    filtered_kpts = kpts_2d[valid_mask]
+
+    return valid_ids, filtered_kpts
+
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--video', type=str, default='sample_video.mp4', help='input video')
@@ -564,7 +916,30 @@ if __name__ == "__main__":
 
     model.eval()
     #video_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/video/b_2022-11-05-12-20-48_558.mp4"
-    output_dir = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/processed_videos"
+    #output_dir = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/processed_videos"
     #keypoints = np.load("/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/output/b_2022-11-05-12-20-48_558/input_2D/keypoints.npz", allow_pickle=True)['reconstruction']
-    directory = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/3d-based-reid/data/custom_reid/img_experimental_data"
-    get_3D_keypoints_all(directory=directory,show_anim=False)
+
+    '''directory = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/3d-based-reid/data/custom_reid/img_experimental_data"
+    get_3D_keypoints_all(directory=directory,show_anim=False)'''
+    #json_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/meta/pdg-left-10-05/2025-05-10-11-07-08_4.json"
+    json_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/samples_json/2025-05-23-17-11-53_24.json"
+    #vis_kpts_video(json_path)
+    kpts_2d = load_2d_keypoints_from_json(json_path)
+
+    valid_ids,filtered_kpts_2d = filter_confident_keypoints(kpts_2d, threshold=0.65)
+    print('valid_ids nb :', len(valid_ids))
+    print('valid_ids:', valid_ids)
+
+    kpts_2d = np.expand_dims(kpts_2d, axis=0)  # Add batch dimension
+    print('kpts_2d shape:', kpts_2d.shape)
+    video_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/video/test_sliding_window.mp4"
+    ## Reload 
+    output_dir = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/samples_json/processed_360_14"
+    #json_path = process_2D_seq(kpts_2d,video_path,output_dir,model)
+    json_path = '/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/samples_json/2025-05-28-07-35-11_135.json'
+
+
+    json_path = '/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionBERT_custom/lib/data/processed_videos/360/360_14/keypoints_xyz.json'
+    json_path = '/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/samples_json/2025-06-08-11-28-57_2183.json'
+    #json_path = get_pose3D(video_path, output_dir, kpts_2d, model)
+    #vis_kpts_video(json_path)

@@ -10,6 +10,7 @@ import torch.nn as nn
 import glob
 from tqdm import tqdm
 import copy
+import json 
 
 sys.path.append(os.getcwd())
 from demo.lib.utils import normalize_screen_coordinates, camera_to_world
@@ -61,6 +62,10 @@ def show3Dpose(vals, ax):
     for i in np.arange( len(I) ):
         x, y, z = [np.array( [vals[I[i], j], vals[J[i], j]] ) for j in range(3)]
         ax.plot(x, y, z, lw=2, color = lcolor if LR[i] else rcolor)
+
+    for idx, (x, y, z) in enumerate(vals):
+        ax.text(x, y, z, str(idx), fontsize=8, color='black')
+
 
     RADIUS = 0.72
     RADIUS_Z = 0.7
@@ -184,6 +189,26 @@ def flip_data(data, left_joints=[1, 2, 3, 14, 15, 16], right_joints=[4, 5, 6, 11
     flipped_data[..., left_joints + right_joints, :] = flipped_data[..., right_joints + left_joints, :]  # Change orders
     return flipped_data
 
+def load_2d_keypoints_from_json(json_path):
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    frames = data['twod_pose']
+    frame_ids = sorted(frames.keys(), key=int)
+    T = len(frame_ids)
+    num_joints = 17
+
+    keypoints = np.zeros((T, num_joints, 3), dtype=np.float32)
+
+    for t, frame_id in enumerate(frame_ids):
+        kp_list = frames[frame_id]['keypoints']
+        scores = frames[frame_id]['score']
+        for j in range(min(len(kp_list), num_joints)):
+            keypoints[t, j, :2] = np.array(kp_list[j][:2], dtype=np.float32)
+            keypoints[t, j, 2] = scores[j]
+
+    return keypoints
+
 @torch.no_grad()
 def get_pose3D(video_path, output_dir):
     args, _ = argparse.ArgumentParser().parse_known_args()
@@ -210,7 +235,11 @@ def get_pose3D(video_path, output_dir):
     model.eval()
 
     ## input
-    keypoints = np.load(output_dir + 'input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
+    ### TO change back to this : keypoints = np.load(output_dir + 'input_2D/keypoints.npz', allow_pickle=True)['reconstruction']
+    json_path = "/Users/cesarcamusemschwiller/Desktop/Surfeye/code/models_trial/MotionAGFormer_custom/demo/samples_json/2025-05-23-17-11-53_24.json"
+    keypoints = load_2d_keypoints_from_json(json_path)
+
+    keypoints = np.expand_dims(keypoints, axis=0)  # Add batch dimension
     # keypoints = np.load('demo/lakeside3.npy')
     # keypoints = keypoints[:240]
     # keypoints = keypoints[None, ...]
@@ -241,6 +270,7 @@ def get_pose3D(video_path, output_dir):
 
     
     print('\nGenerating 3D pose...')
+    all_frames = []
     for idx, clip in enumerate(clips):
         input_2D = normalize_screen_coordinates(clip, w=img_size[1], h=img_size[0]) 
         input_2D_aug = flip_data(input_2D)
@@ -262,9 +292,24 @@ def get_pose3D(video_path, output_dir):
             rot =  [0.1407056450843811, -0.1500701755285263, -0.755240797996521, 0.6223280429840088]
             rot = np.array(rot, dtype='float32')
             post_out = camera_to_world(post_out, R=rot, t=0)
-            post_out[:, 2] -= np.min(post_out[:, 2])
             max_value = np.max(post_out)
             post_out /= max_value
+            post_out[:, 2] -= np.min(post_out[:, 2])
+            
+
+
+            frame_data = {
+                "frame_index": j + idx * post_out_all.shape[0],
+                "keypoints": {
+                    str(i): {
+                        "x": float(post_out[i][0]),
+                        "y": float(post_out[i][1]),
+                        "z": float(post_out[i][2])
+                    }
+                    for i in range(post_out.shape[0])
+                }
+            }
+            all_frames.append(frame_data)
 
             fig = plt.figure(figsize=(9.6, 5.4))
             gs = gridspec.GridSpec(1, 1)
@@ -277,7 +322,21 @@ def get_pose3D(video_path, output_dir):
             str(('%04d'% (idx * 243 + j)))
             plt.savefig(output_dir_3D + str(('%04d'% (idx * 243 + j))) + '_3D.png', dpi=200, format='png', bbox_inches='tight')
             plt.close(fig)
-        
+
+    # Build final JSON structure
+    json_output = {
+        #"video_name": video_name,
+        #"label": label,
+        "frames": all_frames
+    }
+
+    os.makedirs(output_dir_3D, exist_ok=True)
+    json_path = os.path.join(output_dir_3D, 'keypoints_xyz.json')
+    with open(json_path, 'w') as f:
+        json.dump(json_output, f, indent=4)
+
+    print(f"Saved keypoints to {json_path}")
+
 
         
     print('Generating 3D pose successful!')
@@ -329,7 +388,7 @@ if __name__ == "__main__":
     video_name = video_path.split('/')[-1].split('.')[0]
     output_dir = './demo/output/' + video_name + '/'
 
-    get_pose2D(video_path, output_dir)
+    #get_pose2D(video_path, output_dir)
     get_pose3D(video_path, output_dir)
     img2video(video_path, output_dir)
     print('Generating demo successful!')

@@ -2,10 +2,18 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
+def normalize_screen_coordinates_orig(X, w, h):
+    assert X.shape[-1] == 2 or X.shape[-1] == 3
+    result = np.copy(X)
+    result[..., :2] = X[..., :2] / w * 2 - [1, 0]#h / w]
+    return result
+
 def normalize_screen_coordinates(X, w, h):
     assert X.shape[-1] == 2 or X.shape[-1] == 3
     result = np.copy(X)
-    result[..., :2] = X[..., :2] / w * 2 - [1, h / w]
+    aspect_ratio = w / h
+    result[..., 0] = (X[..., 0] / w) * 2 
+    result[..., 1] = (X[..., 1] / h) * 2 
     return result
 
 
